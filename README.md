@@ -1,2 +1,0 @@
-# decidr
-Created by Rork
