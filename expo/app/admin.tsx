@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useRouter, Stack } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useQuery } from "@tanstack/react-query";
 import * as Haptics from "expo-haptics";
 import {
   ArrowLeft,
@@ -25,10 +26,12 @@ import {
   Settings,
   Save,
   Eraser,
+  BarChart3,
 } from "lucide-react-native";
 import Colors from "@/constants/colors";
 import { useAdmin } from "@/providers/AdminProvider";
 import { useDecisions } from "@/providers/DecisionProvider";
+import { supabase } from "@/lib/supabase";
 import { Decision } from "@/types/decision";
 
 export default function AdminScreen() {
@@ -106,6 +109,86 @@ export default function AdminScreen() {
     );
   }, [deleteArgument]);
 
+  const analyticsQuery = useQuery({
+    queryKey: ["admin-analytics"],
+    enabled: isAdmin,
+    staleTime: 1000 * 60,
+    queryFn: async () => {
+      console.log("[Admin] Loading analytics...");
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      const todayIso = todayStart.toISOString();
+
+      const countRows = async (table: string, gteColumn?: string, gteValue?: string): Promise<number> => {
+        try {
+          let q = supabase.from(table).select("*", { count: "exact", head: true });
+          if (gteColumn && gteValue) q = q.gte(gteColumn, gteValue);
+          const { count, error } = await q;
+          if (error) {
+            console.log("[Admin] Analytics count failed for", table, error.message);
+            return 0;
+          }
+          return count ?? 0;
+        } catch (err) {
+          console.log("[Admin] Analytics count exception for", table, err);
+          return 0;
+        }
+      };
+
+      const [totalUsers, newUsers, totalDebates, debatesToday, totalVotes, votesToday, totalShares] =
+        await Promise.all([
+          countRows("profiles"),
+          countRows("profiles", "created_at", todayIso),
+          countRows("decisions"),
+          countRows("decisions", "created_at", todayIso),
+          countRows("user_votes"),
+          countRows("user_votes", "created_at", todayIso),
+          countRows("decision_shares"),
+        ]);
+
+      const { data: voterRows } = await supabase.from("user_votes").select("user_id");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const activeUsers = new Set((voterRows ?? []).map((r: any) => String(r.user_id))).size;
+
+      const { data: topDebates } = await supabase
+        .from("decisions")
+        .select("id, title, total_votes")
+        .order("total_votes", { ascending: false })
+        .limit(5);
+
+      const { data: categoryRows } = await supabase.from("decisions").select("category");
+      const categoryCounts: Record<string, number> = {};
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (categoryRows ?? []).forEach((row: any) => {
+        const cat = String(row.category ?? "random");
+        categoryCounts[cat] = (categoryCounts[cat] ?? 0) + 1;
+      });
+      const topCategories = Object.entries(categoryCounts)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5);
+
+      return {
+        totalUsers,
+        newUsers,
+        totalDebates,
+        debatesToday,
+        totalVotes,
+        votesToday,
+        totalShares,
+        activeUsers,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        topDebates: (topDebates ?? []).map((row: any) => ({
+          id: String(row.id),
+          title: String(row.title ?? ""),
+          totalVotes: Number(row.total_votes ?? 0),
+        })),
+        topCategories,
+      };
+    },
+  });
+
+  const analytics = analyticsQuery.data;
+
   if (!isAdmin) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -149,6 +232,75 @@ export default function AdminScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 40 }]}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <BarChart3 size={16} color={Colors.dark.gold} />
+            <Text style={styles.sectionTitle}>Analytics</Text>
+          </View>
+          <View style={styles.analyticsGrid}>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>{analytics?.totalUsers ?? "—"}</Text>
+              <Text style={styles.metricLabel}>Total Users</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>{analytics?.newUsers ?? "—"}</Text>
+              <Text style={styles.metricLabel}>New Users Today</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>{analytics?.totalDebates ?? "—"}</Text>
+              <Text style={styles.metricLabel}>Total Debates</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>{analytics?.debatesToday ?? "—"}</Text>
+              <Text style={styles.metricLabel}>Debates Today</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>{analytics?.totalVotes ?? "—"}</Text>
+              <Text style={styles.metricLabel}>Total Votes</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>{analytics?.votesToday ?? "—"}</Text>
+              <Text style={styles.metricLabel}>Votes Today</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>{analytics?.totalShares ?? "—"}</Text>
+              <Text style={styles.metricLabel}>Total Shares</Text>
+            </View>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricValue}>{analytics?.activeUsers ?? "—"}</Text>
+              <Text style={styles.metricLabel}>Active Users (voted)</Text>
+            </View>
+          </View>
+
+          {analytics && analytics.topDebates.length > 0 && (
+            <View style={styles.analyticsSub}>
+              <Text style={styles.analyticsSubTitle}>Most Popular Debates</Text>
+              {analytics.topDebates.map((d, i) => (
+                <View key={d.id} style={styles.analyticsRow}>
+                  <Text style={styles.analyticsRank}>#{i + 1}</Text>
+                  <Text style={styles.analyticsRowTitle} numberOfLines={1}>
+                    {d.title}
+                  </Text>
+                  <Text style={styles.analyticsRowValue}>{d.totalVotes} votes</Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {analytics && analytics.topCategories.length > 0 && (
+            <View style={styles.analyticsSub}>
+              <Text style={styles.analyticsSubTitle}>Most Popular Categories</Text>
+              {analytics.topCategories.map(([cat, count], i) => (
+                <View key={cat} style={styles.analyticsRow}>
+                  <Text style={styles.analyticsRank}>#{i + 1}</Text>
+                  <Text style={styles.analyticsRowTitle}>{cat}</Text>
+                  <Text style={styles.analyticsRowValue}>{count} debates</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </View>
+
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Megaphone size={16} color={Colors.dark.coral} />
@@ -668,6 +820,68 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "600" as const,
     color: Colors.dark.cyan,
+  },
+  analyticsGrid: {
+    flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
+    gap: 8,
+  },
+  metricCard: {
+    width: "47%" as const,
+    flexGrow: 1,
+    backgroundColor: Colors.dark.surfaceElevated,
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  metricValue: {
+    fontSize: 20,
+    fontWeight: "800" as const,
+    color: Colors.dark.text,
+  },
+  metricLabel: {
+    fontSize: 11,
+    fontWeight: "600" as const,
+    color: Colors.dark.textTertiary,
+    marginTop: 2,
+  },
+  analyticsSub: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 0.5,
+    borderTopColor: Colors.dark.border,
+  },
+  analyticsSubTitle: {
+    fontSize: 12,
+    fontWeight: "700" as const,
+    color: Colors.dark.textSecondary,
+    textTransform: "uppercase" as const,
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  analyticsRow: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
+    paddingVertical: 5,
+  },
+  analyticsRank: {
+    fontSize: 11,
+    fontWeight: "700" as const,
+    color: Colors.dark.gold,
+    width: 24,
+  },
+  analyticsRowTitle: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: "600" as const,
+    color: Colors.dark.text,
+  },
+  analyticsRowValue: {
+    fontSize: 12,
+    fontWeight: "600" as const,
+    color: Colors.dark.textTertiary,
   },
 });
 

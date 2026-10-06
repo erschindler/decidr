@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useRef } from "react";
+import React, { useCallback, useState, useRef, useMemo } from "react";
 import {
   View,
   Text,
@@ -34,6 +34,10 @@ import {
   Pencil,
   X,
   Check,
+  Flame,
+  Trophy,
+  Share2,
+  Bookmark,
 } from "lucide-react-native";
 import Colors from "@/constants/colors";
 import { useDecisions, useMyDecisions } from "@/providers/DecisionProvider";
@@ -48,11 +52,20 @@ import { supabase, resolveAvatarUrl, extractAvatarPath } from "@/lib/supabase";
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { profile, refreshAll, updateProfileAvatar, updateProfileName } = useDecisions();
+  const { profile, refreshAll, updateProfileAvatar, updateProfileName, voteStreaks } = useDecisions();
   const { user, signOut } = useAuth();
   const { isAdmin } = useAdmin();
-  const { acceptedFriends } = useSocial();
+  const { acceptedFriends, debatesShared } = useSocial();
   const myDecisions = useMyDecisions();
+
+  // Most Popular Debate — the user's debate with the highest vote count
+  const mostPopularDebate = useMemo(() => {
+    let best: Decision | null = null;
+    for (const d of myDecisions) {
+      if (d.totalVotes > 0 && (!best || d.totalVotes > best.totalVotes)) best = d;
+    }
+    return best;
+  }, [myDecisions]);
   const [refreshing, setRefreshing] = React.useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [editNameVisible, setEditNameVisible] = useState(false);
@@ -320,6 +333,38 @@ export default function ProfileScreen() {
               </View>
             </View>
 
+            <View style={[styles.statsGrid, styles.statsGridSecond]}>
+              <View style={styles.statCard}>
+                <View style={[styles.statIcon, { backgroundColor: Colors.dark.goldDim }]}>
+                  <Flame size={18} color={Colors.dark.gold} />
+                </View>
+                <Text style={styles.statValue}>{voteStreaks.current}</Text>
+                <Text style={styles.statLabel}>Daily Streak</Text>
+              </View>
+
+              <View style={styles.statCard}>
+                <View style={[styles.statIcon, { backgroundColor: Colors.dark.cyanDim }]}>
+                  <Trophy size={18} color={Colors.dark.cyan} />
+                </View>
+                <Text style={styles.statValue}>{voteStreaks.longest}</Text>
+                <Text style={styles.statLabel}>Longest Streak</Text>
+              </View>
+
+              <View style={styles.statCard}>
+                <View style={[styles.statIcon, { backgroundColor: Colors.dark.coralDim }]}>
+                  <Share2 size={18} color={Colors.dark.coral} />
+                </View>
+                <Text style={styles.statValue}>{debatesShared}</Text>
+                <Text style={styles.statLabel}>Debates Shared</Text>
+              </View>
+            </View>
+
+            {profile.votesCast > 0 && (
+              <Text style={styles.disagreementLine}>
+                AI Disagreement: {100 - profile.aiAlignmentRate}%
+              </Text>
+            )}
+
             {profile.aiAlignmentRate >= 70 && (
               <View style={styles.badgeCard}>
                 <Award size={20} color={Colors.dark.gold} />
@@ -331,6 +376,48 @@ export default function ProfileScreen() {
                 </View>
               </View>
             )}
+
+            {mostPopularDebate && (
+              <Pressable
+                style={styles.popularCard}
+                onPress={() => {
+                  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  router.push(`/decision/${mostPopularDebate.id}`);
+                }}
+                testID="profile-most-popular"
+              >
+                <Trophy size={18} color={Colors.dark.gold} />
+                <View style={styles.popularContent}>
+                  <Text style={styles.popularTitle} numberOfLines={1}>
+                    {mostPopularDebate.title}
+                  </Text>
+                  <Text style={styles.popularSubtitle}>
+                    Most Popular Debate · {mostPopularDebate.totalVotes} votes
+                  </Text>
+                </View>
+                <ChevronRight size={16} color={Colors.dark.textTertiary} />
+              </Pressable>
+            )}
+
+            <Pressable
+              style={styles.friendsCard}
+              onPress={() => {
+                void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push("/saved");
+              }}
+              testID="profile-saved"
+            >
+              <View style={styles.friendsLeft}>
+                <View style={[styles.statIcon, { backgroundColor: Colors.dark.goldDim }]}>
+                  <Bookmark size={18} color={Colors.dark.gold} />
+                </View>
+                <View>
+                  <Text style={styles.friendsTitle}>Saved Debates</Text>
+                  <Text style={styles.friendsSubtitle}>Your bookmarked debates</Text>
+                </View>
+              </View>
+              <ChevronRight size={18} color={Colors.dark.textTertiary} />
+            </Pressable>
 
             <Pressable
               style={styles.friendsCard}
@@ -594,6 +681,41 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 10,
     marginBottom: 16,
+  },
+  statsGridSecond: {
+    marginBottom: 6,
+  },
+  disagreementLine: {
+    fontSize: 12,
+    fontWeight: "600" as const,
+    color: Colors.dark.textTertiary,
+    textAlign: "center" as const,
+    marginBottom: 16,
+  },
+  popularCard: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 12,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 14,
+    backgroundColor: Colors.dark.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255, 217, 61, 0.25)",
+  },
+  popularContent: {
+    flex: 1,
+  },
+  popularTitle: {
+    fontSize: 14,
+    fontWeight: "700" as const,
+    color: Colors.dark.text,
+  },
+  popularSubtitle: {
+    fontSize: 12,
+    color: Colors.dark.textTertiary,
+    marginTop: 2,
   },
   statCard: {
     flex: 1,

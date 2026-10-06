@@ -11,6 +11,7 @@ import {
 import { X } from "lucide-react-native";
 import Colors from "@/constants/colors";
 import { useAdmin } from "@/providers/AdminProvider";
+import { AdSlot } from "@/components/AdSlot";
 
 interface BannerAdProps {
   placement?: "home" | "discover" | "detail";
@@ -81,13 +82,16 @@ function BannerAdComponent({ placement = "home" }: BannerAdProps) {
     ]).start(() => setDismissed(true));
   }, [fadeAnim, slideAnim]);
 
-  if (!settings.adsEnabled || dismissed) {
+  if (dismissed) {
     return null;
   }
 
   const ad = AD_CONTENT[adIndex];
 
+  // AdSlot renders nothing at all when ADS ENABLED is OFF — no reserved
+  // space, no empty box, no layout shift.
   return (
+    <AdSlot placement={placement}>
     <Animated.View
       style={[
         styles.container,
@@ -124,6 +128,7 @@ function BannerAdComponent({ placement = "home" }: BannerAdProps) {
         <X size={14} color={Colors.dark.textTertiary} />
       </Pressable>
     </Animated.View>
+    </AdSlot>
   );
 }
 

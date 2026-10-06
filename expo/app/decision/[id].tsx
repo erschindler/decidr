@@ -17,6 +17,7 @@ import * as Haptics from "expo-haptics";
 import {
   ArrowLeft,
   Share2,
+  Bookmark,
   Gavel,
   Lock,
   Check,
@@ -30,16 +31,18 @@ import {
   Send,
 } from "lucide-react-native";
 import Colors from "@/constants/colors";
+import { getCategoryInfo } from "@/types/decision";
 import { useDecisions } from "@/providers/DecisionProvider";
 import { useSocial, useDecisionComments } from "@/providers/SocialProvider";
 import { useAuth } from "@/providers/AuthProvider";
+import { ShareSheet } from "@/components/ShareSheet";
 
 export default function DecisionDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { getDecision, getUserVote, castVote, profile } = useDecisions();
-  const { isLiked, getLikeCount, toggleLike, addComment, isAddingComment, getProfileById } = useSocial();
+  const { isLiked, getLikeCount, toggleLike, addComment, isAddingComment, getProfileById, isSaved, toggleSave } = useSocial();
   const { user } = useAuth();
   const comments = useDecisionComments(id ?? "");
 
@@ -54,6 +57,7 @@ export default function DecisionDetailScreen() {
 
   const liked = isLiked(id ?? "");
   const likeCount = getLikeCount(id ?? "");
+  const saved = isSaved(id ?? "");
 
   const [justification, setJustification] = useState("");
   const [showJustificationInput, setShowJustificationInput] = useState(false);
@@ -61,6 +65,7 @@ export default function DecisionDetailScreen() {
   const [justVoted, setJustVoted] = useState(false);
   const [aiRevealed, setAiRevealed] = useState(hasVoted);
   const [newComment, setNewComment] = useState("");
+  const [shareVisible, setShareVisible] = useState(false);
 
   const voteBarWidthA = useRef(new Animated.Value(hasVoted ? 1 : 0)).current;
   const voteBarWidthB = useRef(new Animated.Value(hasVoted ? 1 : 0)).current;
@@ -209,6 +214,16 @@ export default function DecisionDetailScreen() {
     setNewComment("");
   }, [id, newComment, addComment]);
 
+  const handleSaveToggle = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    toggleSave(id ?? "");
+  }, [id, toggleSave]);
+
+  const handleSharePress = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setShareVisible(true);
+  }, []);
+
   const gavelSpin = gavelRotation.interpolate({
     inputRange: [0, 1],
     outputRange: ["0deg", "-30deg"],
@@ -233,6 +248,9 @@ export default function DecisionDetailScreen() {
   const percentA = Math.round((decision.votesA / totalVotes) * 100);
   const percentB = 100 - percentA;
   const totalComments = comments.length + decision.justifications.length;
+  const categoryInfo = getCategoryInfo(decision.category);
+  const majority: "a" | "b" | "tie" =
+    decision.votesA === decision.votesB ? "tie" : decision.votesA > decision.votesB ? "a" : "b";
 
   return (
     <KeyboardAvoidingView
@@ -254,9 +272,26 @@ export default function DecisionDetailScreen() {
         <Text style={styles.topBarTitle} numberOfLines={1}>
           {decision.title}
         </Text>
-        <Pressable style={styles.topBarBtn} testID="detail-share-button">
-          <Share2 size={20} color={Colors.dark.textSecondary} />
-        </Pressable>
+        <View style={styles.topBarActions}>
+          <Pressable
+            onPress={handleSaveToggle}
+            style={styles.topBarBtn}
+            testID="detail-save-button"
+          >
+            <Bookmark
+              size={18}
+              color={saved ? Colors.dark.gold : Colors.dark.textSecondary}
+              fill={saved ? Colors.dark.gold : "none"}
+            />
+          </Pressable>
+          <Pressable
+            onPress={handleSharePress}
+            style={styles.topBarBtn}
+            testID="detail-share-button"
+          >
+            <Share2 size={20} color={Colors.dark.textSecondary} />
+          </Pressable>
+        </View>
       </View>
 
       <ScrollView
@@ -289,6 +324,19 @@ export default function DecisionDetailScreen() {
         </Pressable>
 
         <Text style={styles.title}>{decision.title}</Text>
+
+        <View style={styles.categoryChipRow}>
+          <View style={styles.categoryChip}>
+            <Text style={styles.categoryChipEmoji}>{categoryInfo.emoji}</Text>
+            <Text style={styles.categoryChipText}>{categoryInfo.label}</Text>
+          </View>
+          {decision.shareCount > 0 && (
+            <View style={styles.categoryChip}>
+              <Share2 size={11} color={Colors.dark.textTertiary} />
+              <Text style={styles.categoryChipText}>{decision.shareCount} shares</Text>
+            </View>
+          )}
+        </View>
 
         <View style={styles.engagementRow}>
           <Pressable style={styles.likeRow} onPress={handleLike} hitSlop={8} testID="detail-like-btn">
@@ -586,6 +634,49 @@ export default function DecisionDetailScreen() {
                     </View>
                   ))}
                 </View>
+
+                {decision.totalVotes > 0 && (
+                  <View style={styles.crowdCompare}>
+                    <Text style={styles.crowdCompareTitle}>AI vs Crowd</Text>
+                    <View style={styles.crowdRow}>
+                      <Text style={styles.crowdLabel}>HUMAN CROWD</Text>
+                      <Text style={styles.crowdValue}>
+                        A {percentA}% · B {percentB}%
+                      </Text>
+                    </View>
+                    <View style={styles.crowdBar}>
+                      <View style={[styles.crowdBarA, { flex: Math.max(1, percentA) }]} />
+                      <View style={[styles.crowdBarB, { flex: Math.max(1, percentB) }]} />
+                    </View>
+                    <View style={styles.crowdRow}>
+                      <Text style={styles.crowdLabel}>AI JUDGE</Text>
+                      <Text
+                        style={[
+                          styles.crowdValue,
+                          {
+                            color:
+                              decision.aiJudgment.vote === "a"
+                                ? Colors.dark.coral
+                                : Colors.dark.cyan,
+                          },
+                        ]}
+                      >
+                        Side {decision.aiJudgment.vote === "a" ? "A" : "B"}
+                      </Text>
+                    </View>
+                    {majority === "tie" ? null : majority === decision.aiJudgment.vote ? (
+                      <View style={[styles.crowdVerdict, styles.crowdAgree]}>
+                        <Text style={styles.crowdAgreeText}>✓ The crowd and AI Judge agree</Text>
+                      </View>
+                    ) : (
+                      <View style={[styles.crowdVerdict, styles.crowdDisagree]}>
+                        <Text style={styles.crowdDisagreeText}>
+                          The crowd and AI Judge disagree
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
               </Animated.View>
             ) : !decision.aiJudgment ? (
               <View style={styles.aiLocked}>
@@ -771,6 +862,12 @@ export default function DecisionDetailScreen() {
           </Pressable>
         </View>
       )}
+      <ShareSheet
+        visible={shareVisible}
+        onClose={() => setShareVisible(false)}
+        decisionId={decision.id}
+        decisionTitle={decision.title}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -837,6 +934,11 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dark.surface,
     justifyContent: "center",
     alignItems: "center",
+  },
+  topBarActions: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 8,
   },
   topBarTitle: {
     flex: 1,
@@ -1415,6 +1517,94 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: {
     backgroundColor: Colors.dark.surface,
+  },
+  categoryChipRow: {
+    flexDirection: "row" as const,
+    flexWrap: "wrap" as const,
+    gap: 8,
+    marginBottom: 16,
+  },
+  categoryChip: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.surfaceHighlight,
+  },
+  categoryChipEmoji: {
+    fontSize: 12,
+  },
+  categoryChipText: {
+    fontSize: 11,
+    fontWeight: "600" as const,
+    color: Colors.dark.textSecondary,
+  },
+  crowdCompare: {
+    marginTop: 4,
+    paddingTop: 14,
+    borderTopWidth: 0.5,
+    borderTopColor: Colors.dark.border,
+  },
+  crowdCompareTitle: {
+    fontSize: 13,
+    fontWeight: "700" as const,
+    color: Colors.dark.text,
+    marginBottom: 10,
+  },
+  crowdRow: {
+    flexDirection: "row" as const,
+    justifyContent: "space-between" as const,
+    alignItems: "center" as const,
+    marginBottom: 6,
+  },
+  crowdLabel: {
+    fontSize: 10,
+    fontWeight: "800" as const,
+    letterSpacing: 1,
+    color: Colors.dark.textTertiary,
+  },
+  crowdValue: {
+    fontSize: 13,
+    fontWeight: "700" as const,
+    color: Colors.dark.text,
+  },
+  crowdBar: {
+    flexDirection: "row" as const,
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+    marginBottom: 10,
+  },
+  crowdBarA: {
+    backgroundColor: Colors.dark.coral,
+  },
+  crowdBarB: {
+    backgroundColor: Colors.dark.cyan,
+  },
+  crowdVerdict: {
+    alignItems: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginTop: 4,
+  },
+  crowdAgree: {
+    backgroundColor: Colors.dark.cyanDim,
+  },
+  crowdDisagree: {
+    backgroundColor: "rgba(245, 158, 11, 0.12)",
+  },
+  crowdAgreeText: {
+    fontSize: 12,
+    fontWeight: "700" as const,
+    color: Colors.dark.cyan,
+  },
+  crowdDisagreeText: {
+    fontSize: 12,
+    fontWeight: "700" as const,
+    color: Colors.dark.warning,
   },
 });
 

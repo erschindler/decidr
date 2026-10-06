@@ -13,6 +13,11 @@ import Colors from "@/constants/colors";
 
 void SplashScreen.preventAutoHideAsync();
 
+// Shared debate URLs use the /debate/<id> path — expo-router serves the same
+// DecisionDetailScreen for both /decision/[id] and /debate/[id] (see
+// app/debate/[id].tsx), so a shared link opens the real debate with the
+// existing vote-before-AI-reveal rules and never creates a duplicate.
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -78,6 +83,9 @@ function RootLayoutNav() {
         <Stack.Screen name="user/[id]" options={{ headerShown: false }} />
         <Stack.Screen name="friends" options={{ headerShown: false, presentation: "modal" }} />
         <Stack.Screen name="leaderboard" options={{ headerShown: false }} />
+        <Stack.Screen name="saved" options={{ headerShown: false }} />
+        <Stack.Screen name="notifications" options={{ headerShown: false }} />
+        <Stack.Screen name="debate/[id]" options={{ headerShown: false }} />
       </Stack>
     </AuthGate>
   );

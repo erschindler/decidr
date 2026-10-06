@@ -6,6 +6,7 @@ import { z } from "zod";
 import { Decision, UserVote, UserProfile, AIJudgment, Category, Side } from "@/types/decision";
 import { useAuth } from "@/providers/AuthProvider";
 import { supabase, resolveAvatarUrl } from "@/lib/supabase";
+import { computeStreaks } from "@/lib/stats";
 
 function getDefaultProfile(userId: string, displayName?: string): UserProfile {
   return {
@@ -31,6 +32,8 @@ function mapRowToDecision(row: any): Decision {
     totalVotes: Number(row.total_votes ?? 0),
     createdBy: (row.created_by as string) ?? "",
     createdAt: (row.created_at as string) ?? "",
+    updatedAt: (row.updated_at as string) ?? (row.created_at as string) ?? "",
+    shareCount: Number(row.share_count ?? 0),
     justifications: (row.justifications as Decision["justifications"]) ?? [],
     aiJudgment: row.ai_judgment as AIJudgment | null,
     aiPending: Boolean(row.ai_pending),
@@ -103,6 +106,7 @@ export const [DecisionProvider, useDecisions] = createContextHook(() => {
         decisionId: (row.decision_id as string) ?? "",
         side: (row.side as "a" | "b") ?? "a",
         justification: row.justification as string | undefined,
+        createdAt: (row.created_at as string) ?? "",
       }));
       console.log("[Votes] Fetched", mapped.length, "votes from Supabase");
       return mapped;
@@ -345,6 +349,8 @@ Analyze both sides for logic, evidence quality, factual accuracy, clarity, and p
         totalVotes: 0,
         createdBy: currentUserId,
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        shareCount: 0,
         justifications: [],
         aiJudgment: null,
         aiPending: true,
@@ -408,6 +414,8 @@ Analyze both sides for logic, evidence quality, factual accuracy, clarity, and p
         totalVotes: 0,
         createdBy: currentUserId,
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        shareCount: 0,
         justifications: [],
         aiJudgment: null,
         aiPending: false,
@@ -468,6 +476,8 @@ Analyze both sides for logic, evidence quality, factual accuracy, clarity, and p
         totalVotes: 0,
         createdBy: currentUserId,
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        shareCount: 0,
         justifications: [],
         aiJudgment: null,
         aiPending: false,
@@ -580,7 +590,7 @@ Analyze both sides for logic, evidence quality, factual accuracy, clarity, and p
 
       console.log("[Vote] Vote saved to Supabase successfully");
 
-      const newVote: UserVote = { decisionId, side, justification };
+      const newVote: UserVote = { decisionId, side, justification, createdAt: new Date().toISOString() };
       const updatedVotes = [...userVotes, newVote];
       setUserVotes(updatedVotes);
 
@@ -653,12 +663,19 @@ Analyze both sides for logic, evidence quality, factual accuracy, clarity, and p
     [decisions]
   );
 
+  // Daily Voting Streak stats — derived from actual vote timestamps (see lib/stats)
+  const voteStreaks = useMemo(
+    () => computeStreaks(userVotes.map((v) => v.createdAt)),
+    [userVotes]
+  );
+
   const isLoading = decisionsQuery.isLoading || votesQuery.isLoading;
 
   return {
     decisions,
     userVotes,
     profile,
+    voteStreaks,
     isLoading,
     createDecision,
     createTopicOnly,
@@ -673,12 +690,75 @@ Analyze both sides for logic, evidence quality, factual accuracy, clarity, and p
   };
 });
 
-export function useTrendingDecisions() {
+export type DiscoverySort = "new" | "trending" | "most_voted" | "most_divided" | "popular";
+
+/**
+ * Trending = recent engagement with time decay. A debate with rapidly
+ * increasing activity outranks an older debate with more lifetime votes.
+ * Uses updated_at (bumped by every vote/share) as the recency signal.
+ */
+function trendingScore(d: Decision): number {
+  const engagement = d.totalVotes + d.shareCount * 3 + d.justifications.length;
+  const activityTime = new Date(d.updatedAt || d.createdAt).getTime();
+  const ageHours = Math.max(0, (Date.now() - activityTime) / 3600000);
+  return engagement / Math.pow(ageHours + 2, 1.4);
+}
+
+/** Popular = overall engagement across votes, shares and comments. */
+function popularityScore(d: Decision): number {
+  return d.totalVotes * 2 + d.shareCount * 3 + d.justifications.length;
+}
+
+/** Most Divided = human vote closest to 50/50 (needs at least 2 votes). */
+function dividednessScore(d: Decision): number {
+  return Math.min(d.votesA, d.votesB) / d.totalVotes;
+}
+
+export function useSortedDecisions(sort: DiscoverySort): Decision[] {
   const { decisions } = useDecisions();
-  return useMemo(
-    () => [...decisions].sort((a, b) => b.totalVotes - a.totalVotes),
-    [decisions]
-  );
+  return useMemo(() => {
+    switch (sort) {
+      case "new":
+        return [...decisions].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      case "most_voted":
+        return [...decisions].sort((a, b) => b.totalVotes - a.totalVotes);
+      case "most_divided": {
+        const withVotes = decisions.filter((d) => d.totalVotes >= 2);
+        return [...withVotes].sort((a, b) => {
+          const diff = dividednessScore(b) - dividednessScore(a);
+          if (diff !== 0) return diff;
+          return b.totalVotes - a.totalVotes;
+        });
+      }
+      case "popular":
+        return [...decisions].sort((a, b) => popularityScore(b) - popularityScore(a));
+      case "trending":
+      default:
+        return [...decisions].sort((a, b) => trendingScore(b) - trendingScore(a));
+    }
+  }, [decisions, sort]);
+}
+
+export function useTrendingDecisions() {
+  return useSortedDecisions("trending");
+}
+
+export function useNewDecisions() {
+  return useSortedDecisions("new");
+}
+
+export function useMostVotedDecisions() {
+  return useSortedDecisions("most_voted");
+}
+
+export function useMostDividedDecisions() {
+  return useSortedDecisions("most_divided");
+}
+
+export function usePopularDecisions() {
+  return useSortedDecisions("popular");
 }
 
 export function useFilteredDecisions(category: Category | "all", search: string) {

@@ -13,8 +13,10 @@ export interface AdminSettings {
   moderationEnabled: boolean;
 }
 
+// ADS ENABLED defaults to OFF per product spec — ads only exist when an
+// admin explicitly turns them on in app_settings (DB is authoritative).
 const DEFAULT_SETTINGS: AdminSettings = {
-  adsEnabled: true,
+  adsEnabled: false,
   debateTopicCharLimit: 500,
   argumentCharLimit: 500,
   debateTimeframeDays: 7,

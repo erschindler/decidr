@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import {
   View,
   Text,
@@ -10,28 +10,61 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
-import { Search, TrendingUp, Trophy } from "lucide-react-native";
+import { Search, Trophy } from "lucide-react-native";
 import Colors from "@/constants/colors";
 import { useRouter } from "expo-router";
-import { useTrendingDecisions, useFilteredDecisions, useDecisions } from "@/providers/DecisionProvider";
+import { useSortedDecisions, useDecisions, DiscoverySort } from "@/providers/DecisionProvider";
+import { useFriendDebates } from "@/providers/SocialProvider";
 import { DecisionCard } from "@/components/DecisionCard";
 import { BannerAd } from "@/components/BannerAd";
 import { Category, CATEGORIES, Decision } from "@/types/decision";
+
+type FeedId = DiscoverySort | "friends";
+
+const FEEDS: { id: FeedId; label: string; emoji: string }[] = [
+  { id: "new", label: "New", emoji: "🆕" },
+  { id: "trending", label: "Trending", emoji: "🔥" },
+  { id: "most_voted", label: "Most Voted", emoji: "🗳️" },
+  { id: "most_divided", label: "Most Divided", emoji: "⚖️" },
+  { id: "popular", label: "Popular", emoji: "⭐" },
+  { id: "friends", label: "Friends", emoji: "👥" },
+];
 
 export default function DiscoverScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<Category | "all">("all");
+  const [activeFeed, setActiveFeed] = useState<FeedId>("trending");
   const [refreshing, setRefreshing] = useState(false);
-  const trending = useTrendingDecisions();
-  const filtered = useFilteredDecisions(selectedCategory, search);
-  const { refreshAll } = useDecisions();
 
-  const showTrending = !search.trim() && selectedCategory === "all";
-  const displayData = showTrending ? trending : filtered;
+  const { refreshAll, getUserVote } = useDecisions();
+  const sorted = useSortedDecisions(activeFeed === "friends" ? "new" : activeFeed);
+  const friendDebates = useFriendDebates();
 
-  const { getUserVote } = useDecisions();
+  const source = activeFeed === "friends" ? friendDebates : sorted;
+
+  // Category + search always compose on top of the active feed
+  // (e.g. Gaming → Trending, Politics → Most Divided).
+  const displayData = useMemo(() => {
+    let list = source;
+    if (selectedCategory !== "all") {
+      list = list.filter((d) => d.category === selectedCategory);
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (d) =>
+          d.title.toLowerCase().includes(q) ||
+          (d.sideA?.title.toLowerCase().includes(q) ?? false) ||
+          (d.sideB?.title.toLowerCase().includes(q) ?? false)
+      );
+    }
+    return list;
+  }, [source, selectedCategory, search]);
+
+  const isFiltering = !!search.trim() || selectedCategory !== "all";
+  const activeFeedLabel = FEEDS.find((f) => f.id === activeFeed)?.label ?? "Trending";
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
@@ -46,6 +79,23 @@ export default function DiscoverScreen() {
     ),
     [getUserVote]
   );
+
+  const renderFeedChip = useCallback(({ item }: { item: { id: FeedId; label: string; emoji: string } }) => {
+    const active = activeFeed === item.id;
+    return (
+      <Pressable
+        style={[styles.feedChip, active && styles.feedChipActive]}
+        onPress={() => {
+          setActiveFeed(item.id);
+          void Haptics.selectionAsync();
+        }}
+        testID={`discover-feed-${item.id}`}
+      >
+        <Text style={styles.feedChipEmoji}>{item.emoji}</Text>
+        <Text style={[styles.feedChipText, active && styles.feedChipTextActive]}>{item.label}</Text>
+      </Pressable>
+    );
+  }, [activeFeed]);
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
@@ -73,6 +123,18 @@ export default function DiscoverScreen() {
           value={search}
           onChangeText={setSearch}
           testID="discover-search-input"
+        />
+      </View>
+
+      <View style={styles.feedsSection}>
+        <FlatList
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          data={FEEDS}
+          keyExtractor={(item) => item.id}
+          renderItem={renderFeedChip}
+          contentContainerStyle={styles.feedsRow}
+          testID="discover-feeds-row"
         />
       </View>
 
@@ -130,9 +192,8 @@ export default function DiscoverScreen() {
       <BannerAd placement="discover" />
 
       <View style={styles.listHeader}>
-        <TrendingUp size={16} color={Colors.dark.coral} />
         <Text style={styles.listHeaderText}>
-          {showTrending ? "Trending Debates" : `Results (${displayData.length})`}
+          {isFiltering ? `Results (${displayData.length})` : `${activeFeedLabel} Debates`}
         </Text>
       </View>
 
@@ -201,7 +262,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginHorizontal: 16,
-    marginBottom: 16,
+    marginBottom: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: Colors.dark.surface,
@@ -215,6 +276,39 @@ const styles = StyleSheet.create({
     color: Colors.dark.text,
     fontSize: 15,
     padding: 0,
+  },
+  feedsSection: {
+    marginBottom: 14,
+  },
+  feedsRow: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  feedChip: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 5,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: Colors.dark.surface,
+    borderWidth: 1,
+    borderColor: Colors.dark.border,
+  },
+  feedChipActive: {
+    backgroundColor: Colors.dark.coralDim,
+    borderColor: Colors.dark.coral,
+  },
+  feedChipEmoji: {
+    fontSize: 13,
+  },
+  feedChipText: {
+    fontSize: 13,
+    fontWeight: "600" as const,
+    color: Colors.dark.textSecondary,
+  },
+  feedChipTextActive: {
+    color: Colors.dark.coral,
   },
   categoriesSection: {
     paddingHorizontal: 16,
@@ -293,4 +387,3 @@ const styles = StyleSheet.create({
     color: Colors.dark.textSecondary,
   },
 });
-

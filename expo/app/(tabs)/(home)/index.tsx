@@ -14,9 +14,10 @@ import {
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
-import { Search, Plus, Flame, Clock } from "lucide-react-native";
+import { Search, Plus, Flame, Clock, Bell } from "lucide-react-native";
 import Colors from "@/constants/colors";
 import { useDecisions, useFilteredDecisions } from "@/providers/DecisionProvider";
+import { useSocial } from "@/providers/SocialProvider";
 import { DecisionCard } from "@/components/DecisionCard";
 import { BannerAd } from "@/components/BannerAd";
 import { Category, CATEGORIES, Decision } from "@/types/decision";
@@ -27,6 +28,7 @@ export default function HomeFeedScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { isLoading, refreshAll } = useDecisions();
+  const { unreadCount } = useSocial();
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<Category | "all">("all");
   const [sortMode, setSortMode] = useState<SortMode>("trending");
@@ -99,7 +101,23 @@ export default function HomeFeedScreen() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.logo}>Decidr</Text>
-        <View style={styles.sortToggle}>
+        <View style={styles.headerRight}>
+          <Pressable
+            style={styles.bellBtn}
+            onPress={() => {
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              router.push("/notifications");
+            }}
+            testID="notifications-bell"
+          >
+            <Bell size={20} color={Colors.dark.text} />
+            {unreadCount > 0 && (
+              <View style={styles.bellBadge}>
+                <Text style={styles.bellBadgeText}>{unreadCount > 9 ? "9+" : unreadCount}</Text>
+              </View>
+            )}
+          </Pressable>
+          <View style={styles.sortToggle}>
           <Pressable
             style={[styles.sortBtn, sortMode === "trending" && styles.sortBtnActive]}
             onPress={() => {
@@ -126,6 +144,7 @@ export default function HomeFeedScreen() {
               New
             </Text>
           </Pressable>
+          </View>
         </View>
       </View>
 
@@ -253,6 +272,38 @@ const styles = StyleSheet.create({
     fontWeight: "900" as const,
     color: Colors.dark.text,
     letterSpacing: -0.5,
+  },
+  headerRight: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 10,
+  },
+  bellBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: Colors.dark.surface,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+  },
+  bellBadge: {
+    position: "absolute" as const,
+    top: -2,
+    right: -2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: Colors.dark.coral,
+    justifyContent: "center" as const,
+    alignItems: "center" as const,
+    paddingHorizontal: 3,
+    borderWidth: 2,
+    borderColor: Colors.dark.background,
+  },
+  bellBadgeText: {
+    fontSize: 8,
+    fontWeight: "800" as const,
+    color: "#fff",
   },
   sortToggle: {
     flexDirection: "row",

@@ -10,6 +10,8 @@ import {
   ActivityItem,
   PublicProfile,
 } from "@/types/social";
+import { AppNotification, Decision } from "@/types/decision";
+import { useDecisions } from "@/providers/DecisionProvider";
 
 export interface CachedProfile {
   id: string;
@@ -29,6 +31,8 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
   const [friendships, setFriendships] = useState<Friendship[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [profilesCache, setProfilesCache] = useState<Record<string, CachedProfile>>({});
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savedEntries, setSavedEntries] = useState<Array<{ decisionId: string; savedAt: string }>>([]);
 
   const getCurrentUserAvatar = useCallback((): string => {
     if (currentUserId && profilesCache[currentUserId]) {
@@ -235,6 +239,78 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
     },
   });
 
+  const savedQuery = useQuery({
+    queryKey: ["saved_debates", currentUserId],
+    enabled: isAuthenticated && !!currentUserId,
+    queryFn: async () => {
+      if (!currentUserId) return [] as Array<{ decisionId: string; savedAt: string }>;
+      console.log("[Social] Fetching saved debates...");
+      const { data, error } = await supabase
+        .from("saved_debates")
+        .select("decision_id, created_at")
+        .eq("user_id", currentUserId)
+        .order("created_at", { ascending: false });
+      if (error) {
+        console.log("[Social] Saved debates fetch error:", error.message);
+        return [] as Array<{ decisionId: string; savedAt: string }>;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (data ?? []).map((row: any) => ({
+        decisionId: String(row.decision_id),
+        savedAt: String(row.created_at ?? ""),
+      }));
+    },
+  });
+
+  const mySharesQuery = useQuery({
+    queryKey: ["my_shares", currentUserId],
+    enabled: isAuthenticated && !!currentUserId,
+    queryFn: async () => {
+      if (!currentUserId) return [] as string[];
+      const { data, error } = await supabase
+        .from("decision_shares")
+        .select("decision_id")
+        .eq("user_id", currentUserId);
+      if (error) {
+        console.log("[Social] Shares fetch error:", error.message);
+        return [] as string[];
+      }
+      // One row per user/decision/method — distinct debates shared by this user
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return Array.from(new Set((data ?? []).map((row: any) => String(row.decision_id))));
+    },
+  });
+
+  const notificationsQuery = useQuery({
+    queryKey: ["notifications", currentUserId],
+    enabled: isAuthenticated && !!currentUserId,
+    queryFn: async () => {
+      if (!currentUserId) return [] as AppNotification[];
+      console.log("[Social] Fetching notifications...");
+      const { data, error } = await supabase
+        .from("notifications")
+        .select("*")
+        .eq("user_id", currentUserId)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) {
+        console.log("[Social] Notifications fetch error:", error.message);
+        return [] as AppNotification[];
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (data ?? []).map((row: any): AppNotification => ({
+        id: String(row.id),
+        type: row.type as AppNotification["type"],
+        title: String(row.title ?? ""),
+        body: row.body ? String(row.body) : null,
+        actorId: row.actor_id ? String(row.actor_id) : null,
+        decisionId: row.decision_id ? String(row.decision_id) : null,
+        isRead: Boolean(row.is_read),
+        createdAt: String(row.created_at ?? ""),
+      }));
+    },
+  });
+
   useEffect(() => {
     if (likesQuery.data) {
       setLikedDecisionIds(likesQuery.data.userLikes);
@@ -249,6 +325,13 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
   useEffect(() => {
     if (activitiesQuery.data) setActivities(activitiesQuery.data);
   }, [activitiesQuery.data]);
+
+  useEffect(() => {
+    if (savedQuery.data) {
+      setSavedEntries(savedQuery.data);
+      setSavedIds(new Set(savedQuery.data.map((s) => s.decisionId)));
+    }
+  }, [savedQuery.data]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -275,6 +358,14 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
       .on("postgres_changes", { event: "*", schema: "public", table: "profiles" }, () => {
         console.log("[Social Realtime] Profiles changed");
         void queryClient.invalidateQueries({ queryKey: ["profiles_cache"] });
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications" }, () => {
+        console.log("[Social Realtime] New notification");
+        void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "saved_debates" }, () => {
+        console.log("[Social Realtime] Saved debates changed");
+        void queryClient.invalidateQueries({ queryKey: ["saved_debates"] });
       })
       .subscribe((status) => {
         console.log("[Social Realtime] Status:", status);
@@ -566,6 +657,87 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
     },
   });
 
+  const toggleSaveMutation = useMutation({
+    mutationFn: async (decisionId: string) => {
+      if (!currentUserId) throw new Error("Not authenticated");
+      const wasSaved = savedIds.has(decisionId);
+      if (wasSaved) {
+        console.log("[Social] Unsaving decision:", decisionId);
+        const { error } = await supabase
+          .from("saved_debates")
+          .delete()
+          .eq("user_id", currentUserId)
+          .eq("decision_id", decisionId);
+        if (error) throw new Error(error.message);
+        return { decisionId, saved: false };
+      }
+      console.log("[Social] Saving decision:", decisionId);
+      const { error } = await supabase
+        .from("saved_debates")
+        .insert({ user_id: currentUserId, decision_id: decisionId });
+      if (error) throw new Error(error.message);
+      return { decisionId, saved: true };
+    },
+    onMutate: (decisionId: string) => {
+      const wasSaved = savedIds.has(decisionId);
+      setSavedIds((prev) => {
+        const next = new Set(prev);
+        if (wasSaved) {
+          next.delete(decisionId);
+        } else {
+          next.add(decisionId);
+        }
+        return next;
+      });
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["saved_debates"] });
+    },
+    onError: (_err: Error, decisionId: string) => {
+      // Revert optimistic update
+      const isCurrentlySaved = savedIds.has(decisionId);
+      setSavedIds((prev) => {
+        const next = new Set(prev);
+        if (isCurrentlySaved) {
+          next.delete(decisionId);
+        } else {
+          next.add(decisionId);
+        }
+        return next;
+      });
+    },
+  });
+
+  const markNotificationReadMutation = useMutation({
+    mutationFn: async (notificationId: string) => {
+      const { error } = await supabase
+        .from("notifications")
+        .update({ is_read: true })
+        .eq("id", notificationId);
+      if (error) throw new Error(error.message);
+      return notificationId;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+
+  const markAllNotificationsReadMutation = useMutation({
+    mutationFn: async () => {
+      if (!currentUserId) throw new Error("Not authenticated");
+      const { error } = await supabase
+        .from("notifications")
+        .update({ is_read: true })
+        .eq("user_id", currentUserId)
+        .eq("is_read", false);
+      if (error) throw new Error(error.message);
+      return true;
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+
   const toggleLike = useCallback(
     (decisionId: string) => {
       toggleLikeMutation.mutate(decisionId);
@@ -636,6 +808,29 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
     [likedDecisionIds]
   );
 
+  const isSaved = useCallback(
+    (decisionId: string) => savedIds.has(decisionId),
+    [savedIds]
+  );
+
+  const toggleSave = useCallback(
+    (decisionId: string) => {
+      toggleSaveMutation.mutate(decisionId);
+    },
+    [toggleSaveMutation]
+  );
+
+  const markNotificationRead = useCallback(
+    (notificationId: string) => {
+      markNotificationReadMutation.mutate(notificationId);
+    },
+    [markNotificationReadMutation]
+  );
+
+  const markAllNotificationsRead = useCallback(() => {
+    markAllNotificationsReadMutation.mutate();
+  }, [markAllNotificationsReadMutation]);
+
   const getLikeCount = useCallback(
     (decisionId: string) => likeCounts[decisionId] ?? 0,
     [likeCounts]
@@ -681,6 +876,22 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
     [friendships, currentUserId]
   );
 
+  const notifications = notificationsQuery.data ?? [];
+  const unreadCount = useMemo(
+    () => notifications.filter((n) => !n.isRead).length,
+    [notifications]
+  );
+
+  const debatesShared = mySharesQuery.data?.length ?? 0;
+
+  const friendIds = useMemo(
+    () =>
+      acceptedFriends.map((f) =>
+        f.requesterId === currentUserId ? f.recipientId : f.requesterId
+      ),
+    [acceptedFriends, currentUserId]
+  );
+
   const refreshSocial = useCallback(() => {
     console.log("[Social] Refreshing all social data...");
     void queryClient.invalidateQueries({ queryKey: ["decision_likes"] });
@@ -688,6 +899,9 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
     void queryClient.invalidateQueries({ queryKey: ["friendships"] });
     void queryClient.invalidateQueries({ queryKey: ["activities"] });
     void queryClient.invalidateQueries({ queryKey: ["profiles_cache"] });
+    void queryClient.invalidateQueries({ queryKey: ["saved_debates"] });
+    void queryClient.invalidateQueries({ queryKey: ["my_shares"] });
+    void queryClient.invalidateQueries({ queryKey: ["notifications"] });
   }, [queryClient]);
 
   const isLoading =
@@ -703,6 +917,12 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
     pendingRequests,
     sentRequests,
     activities,
+    notifications,
+    unreadCount,
+    savedIds,
+    savedEntries,
+    debatesShared,
+    friendIds,
     isLoading,
     toggleLike,
     isLiked,
@@ -714,9 +934,14 @@ export const [SocialProvider, useSocial] = createContextHook(() => {
     respondToFriendRequest,
     removeFriend,
     getFriendshipWith,
+    isSaved,
+    toggleSave,
+    markNotificationRead,
+    markAllNotificationsRead,
     refreshSocial,
     isAddingComment: addCommentMutation.isPending,
     isSendingFriendRequest: sendFriendRequestMutation.isPending,
+    isTogglingSave: toggleSaveMutation.isPending,
     sendFriendRequestError: sendFriendRequestMutation.error?.message ?? null,
   };
 });
@@ -742,4 +967,28 @@ export function useFriendActivity() {
       (a) => friendIds.has(a.userId) || a.userId === user?.id
     );
   }, [activities, acceptedFriends, user?.id]);
+}
+
+/** Debates the current user saved, in save order (newest first). */
+export function useSavedDecisions(): Decision[] {
+  const { savedEntries } = useSocial();
+  const { decisions } = useDecisions();
+  return useMemo(() => {
+    const byId = new Map(decisions.map((d) => [d.id, d]));
+    return savedEntries
+      .map((s) => byId.get(s.decisionId))
+      .filter((d): d is Decision => d !== undefined);
+  }, [savedEntries, decisions]);
+}
+
+/** Debates created by the current user's accepted friends, newest first. */
+export function useFriendDebates(): Decision[] {
+  const { friendIds } = useSocial();
+  const { decisions } = useDecisions();
+  return useMemo(() => {
+    const ids = new Set(friendIds);
+    return decisions
+      .filter((d) => ids.has(d.createdBy))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [friendIds, decisions]);
 }

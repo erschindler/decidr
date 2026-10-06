@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from "react";
+import React, { useRef, useCallback, useState } from "react";
 import {
   View,
   Text,
@@ -9,10 +9,11 @@ import {
 import { useRouter } from "expo-router";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
-import { MessageSquare, TrendingUp, Gavel, Lock, Users, PenLine, Heart } from "lucide-react-native";
+import { MessageSquare, TrendingUp, Gavel, Lock, Users, PenLine, Heart, Bookmark, Share2 } from "lucide-react-native";
 import Colors from "@/constants/colors";
-import { Decision, UserVote } from "@/types/decision";
+import { Decision, UserVote, getCategoryInfo } from "@/types/decision";
 import { useSocial } from "@/providers/SocialProvider";
+import { ShareSheet } from "@/components/ShareSheet";
 
 interface DecisionCardProps {
   decision: Decision;
@@ -26,11 +27,13 @@ function DecisionCardComponent({ decision, userVote }: DecisionCardProps) {
   const hasVoted = !!userVote;
   const isOpen = decision.status === "open_topic" || decision.status === "open_one_side";
 
-  const { isLiked, getLikeCount, toggleLike, getCommentsForDecision, getProfileById } = useSocial();
+  const { isLiked, getLikeCount, toggleLike, getCommentsForDecision, getProfileById, isSaved, toggleSave } = useSocial();
   const liked = isLiked(decision.id);
   const likeCount = getLikeCount(decision.id);
+  const saved = isSaved(decision.id);
   const comments = getCommentsForDecision(decision.id);
   const creatorProfile = getProfileById(decision.createdBy);
+  const [shareVisible, setShareVisible] = useState(false);
 
   const totalVotes = decision.totalVotes || 1;
   const percentA = Math.round((decision.votesA / totalVotes) * 100);
@@ -78,7 +81,17 @@ function DecisionCardComponent({ decision, userVote }: DecisionCardProps) {
     toggleLike(decision.id);
   }, [heartScale, toggleLike, decision.id]);
 
-  const categoryInfo = getCategoryEmoji(decision.category);
+  const categoryInfo = getCategoryInfo(decision.category);
+
+  const handleSave = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    toggleSave(decision.id);
+  }, [toggleSave, decision.id]);
+
+  const handleSharePress = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setShareVisible(true);
+  }, []);
 
   const handleCreatorPress = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -125,7 +138,8 @@ function DecisionCardComponent({ decision, userVote }: DecisionCardProps) {
         <View style={styles.header}>
           <View style={styles.headerLeft}>
             <View style={styles.categoryBadge}>
-              <Text style={styles.categoryEmoji}>{categoryInfo}</Text>
+              <Text style={styles.categoryEmoji}>{categoryInfo.emoji}</Text>
+              <Text style={styles.categoryLabel}>{categoryInfo.label}</Text>
             </View>
             {statusBadge && (
               <View style={[styles.statusBadge, { backgroundColor: statusBadge.bg }]}>
@@ -263,6 +277,32 @@ function DecisionCardComponent({ decision, userVote }: DecisionCardProps) {
                     </Text>
                   )}
                 </Pressable>
+                <Pressable
+                  style={styles.likeBtn}
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    handleSave();
+                  }}
+                  hitSlop={6}
+                  testID={`save-btn-${decision.id}`}
+                >
+                  <Bookmark
+                    size={15}
+                    color={saved ? Colors.dark.gold : Colors.dark.textTertiary}
+                    fill={saved ? Colors.dark.gold : "none"}
+                  />
+                </Pressable>
+                <Pressable
+                  style={styles.likeBtn}
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    handleSharePress();
+                  }}
+                  hitSlop={6}
+                  testID={`share-btn-${decision.id}`}
+                >
+                  <Share2 size={14} color={Colors.dark.textTertiary} />
+                </Pressable>
                 <View style={styles.commentCount}>
                   <MessageSquare size={13} color={Colors.dark.textTertiary} />
                   <Text style={styles.footerText}>
@@ -291,6 +331,13 @@ function DecisionCardComponent({ decision, userVote }: DecisionCardProps) {
           )}
         </View>
       </Animated.View>
+
+      <ShareSheet
+        visible={shareVisible}
+        onClose={() => setShareVisible(false)}
+        decisionId={decision.id}
+        decisionTitle={decision.title}
+      />
     </Pressable>
   );
 }
@@ -307,22 +354,6 @@ function getRelativeTime(dateStr: string): string {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d`;
   return `${Math.floor(days / 7)}w`;
-}
-
-function getCategoryEmoji(category: string): string {
-  const map: Record<string, string> = {
-    food: "🍕",
-    lifestyle: "✨",
-    tech: "💻",
-    politics: "🏛️",
-    entertainment: "🎬",
-    sports: "⚽",
-    relationships: "💬",
-    finance: "💰",
-    health: "🏃",
-    random: "🎲",
-  };
-  return map[category] || "🎲";
 }
 
 export const DecisionCard = React.memo(DecisionCardComponent, (prev, next) => {
@@ -387,13 +418,21 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   categoryBadge: {
+    flexDirection: "row" as const,
+    alignItems: "center" as const,
+    gap: 4,
     backgroundColor: Colors.dark.surfaceHighlight,
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
   categoryEmoji: {
-    fontSize: 14,
+    fontSize: 12,
+  },
+  categoryLabel: {
+    fontSize: 10,
+    fontWeight: "600" as const,
+    color: Colors.dark.textSecondary,
   },
   statusBadge: {
     flexDirection: "row",
