@@ -1,16 +1,10 @@
 // ─────────────────────────────────────────────────────────────────
-// Decidr web configuration — EDIT THESE TWO VALUES, then redeploy.
-//
-//   supabaseUrl:     your Supabase project URL
-//                    (same value as EXPO_PUBLIC_SUPABASE_URL in the app)
-//   supabaseAnonKey: your Supabase anon/public key
-//                    (same value as EXPO_PUBLIC_SUPABASE_KEY in the app)
-//
-// These are public values by design — all sensitive data is protected
-// by Supabase Row Level Security. This page only ever reads debate
-// titles, sides, and vote counts. It NEVER loads the AI verdict.
+// Decidr web configuration — public values by design; Row Level
+// Security protects all sensitive data. This page only ever reads
+// debate titles, sides, and vote counts. It NEVER loads the AI verdict.
+// Regenerate with: bun website/scripts/bake-config.mjs
 // ─────────────────────────────────────────────────────────────────
 window.DECIDR_CONFIG = {
   supabaseUrl: "https://kkemayksfncenxztvvsn.supabase.co",
-  supabaseAnonKey: "",
+  supabaseAnonKey: "sb_publishable_a8QKceyKl6DeS8B7Ia6IiA_SVJbGe6W",
 };
